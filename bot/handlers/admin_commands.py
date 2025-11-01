@@ -16,6 +16,8 @@ ASK_SET_INFO = 1002
 ASK_SET_KONTAKT = 1003
 ASK_SET_TIME = 1004
 ASK_SET_EX_TIME = 1005
+ASK_GROUPS_ADD = 1006
+ASK_GROUPS_DEL = 1007
 
 
 def _normalize_id_set(values: Iterable) -> set[int]:
@@ -65,7 +67,7 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         kb = [
             [InlineKeyboardButton("Set Info", callback_data="set_info"), InlineKeyboardButton("Set Kontakt", callback_data="set_kontakt")],
             [InlineKeyboardButton("Time", callback_data="time"), InlineKeyboardButton("Ex-Time", callback_data="ex_time")],
-            [InlineKeyboardButton("Groups", callback_data="groups"), InlineKeyboardButton("Status", callback_data="status")],
+            [InlineKeyboardButton("Groups", callback_data="groups"), InlineKeyboardButton("Status", callback_data="admin_status")],
         ]
         await update.effective_chat.send_message("Admin Panel", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -85,6 +87,53 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             [InlineKeyboardButton("Back", callback_data="back")],
         ]
         await update.effective_chat.send_message("Groups Menu", reply_markup=InlineKeyboardMarkup(kb))
+
+    async def groups_list_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await ensure_admin(update, context):
+            return
+        from bot.services.groups_service import GroupsService
+        svc = GroupsService(command_bus.database)
+        page = await svc.list_groups(page=1, per_page=50)
+        if not page.groups:
+            await update.effective_chat.send_message("Brak grup w bazie.")
+            return
+        lines = [f"{g.telegram_id}: {g.title}" for g in page.groups]
+        await update.effective_chat.send_message("Lista grup:\n" + "\n".join(lines))
+
+    async def on_groups_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await ensure_admin(update, context):
+            return ConversationHandler.END
+        await update.effective_chat.send_message("Podaj identyfikator grupy (chat_id lub @username)")
+        return ASK_GROUPS_ADD
+
+    async def on_groups_add_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await ensure_admin(update, context):
+            return ConversationHandler.END
+        ident = (update.message.text or "").strip()
+        from bot.services.groups_service import GroupsService
+        svc = GroupsService(command_bus.database)
+        added, skipped = await svc.add_groups_bulk(ident)
+        await update.effective_chat.send_message(f"Dodano: {added}, Pominięto: {skipped}")
+        return ConversationHandler.END
+
+    async def on_groups_del_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await ensure_admin(update, context):
+            return ConversationHandler.END
+        await update.effective_chat.send_message("Podaj ID (z listy) do usunięcia (po jednym na wiadomość)")
+        return ASK_GROUPS_DEL
+
+    async def on_groups_del_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await ensure_admin(update, context):
+            return ConversationHandler.END
+        ident = (update.message.text or "").strip()
+        try:
+            async with command_bus.database.get_session() as db:
+                await db.execute(text("DELETE FROM groups WHERE id = :id"), {"id": int(ident)})
+                await db.commit()
+            await update.effective_chat.send_message(f"Usunięto grupę ID={ident}")
+        except Exception as e:
+            await update.effective_chat.send_message(f"Błąd usuwania: {e}")
+        return ConversationHandler.END
 
     async def on_groups_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await ensure_admin(update, context):
@@ -123,8 +172,8 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         await update.effective_chat.send_message("Zapisano INFO.")
         return ConversationHandler.END
 
-    async def on_set_kontakt_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
+    async def on_set_kontakt_start(update: Update, Context: ContextTypes.DEFAULT_TYPE):
+        if not await ensure_admin(update, Context):
             return ConversationHandler.END
         await update.effective_chat.send_message("Wklej treść KONTAKT (zastąpi obecną)")
         return ASK_SET_KONTAKT
@@ -212,6 +261,12 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             await on_groups_menu(update, context)
         elif data == "groups_bulk":
             await on_groups_bulk_start(update, context)
+        elif data == "groups_list":
+            await groups_list_action(update, context)
+        elif data == "groups_add":
+            await on_groups_add_start(update, context)
+        elif data == "groups_del":
+            await on_groups_del_start(update, context)
         elif data == "set_info":
             await on_set_info_start(update, context)
         elif data == "set_kontakt":
@@ -220,7 +275,7 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             await on_set_time_start(update, context)
         elif data == "ex_time":
             await on_set_ex_time_start(update, context)
-        elif data == "status":
+        elif data == "admin_status":
             await status(update, context)
         else:
             await update.effective_chat.send_message(f"TODO: implement menu action: {data}")
@@ -258,13 +313,29 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         per_message=False,
     )
 
+    conv_add = ConversationHandler(
+        entry_points=[CallbackQueryHandler(on_groups_add_start, pattern="^groups_add$")],
+        states={ASK_GROUPS_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_groups_add_receive)]},
+        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
+        per_message=False,
+    )
+
+    conv_del = ConversationHandler(
+        entry_points=[CallbackQueryHandler(on_groups_del_start, pattern="^groups_del$")],
+        states={ASK_GROUPS_DEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_groups_del_receive)]},
+        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
+        per_message=False,
+    )
+
     app.add_handler(conv_bulk)
     app.add_handler(conv_info)
     app.add_handler(conv_kontakt)
     app.add_handler(conv_time)
     app.add_handler(conv_ex_time)
+    app.add_handler(conv_add)
+    app.add_handler(conv_del)
 
     app.add_handler(CommandHandler(admin_cmd, admin_panel))
     app.add_handler(CommandHandler("status", status))
 
-    logger.info("Admin handlers registered: /%s, /status, callbacks, conversations", admin_cmd)
+    logger.info("Admin handlers registered with Groups List/Add/Delete and admin_status callback")
