@@ -57,7 +57,7 @@ class AdminPanel:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         text = (
-            "🔧 **Panel Administratora**\n\n"
+            "🔧 **Panel Administratora**\\n\\n"
             "Wybierz opcję z menu poniżej:"
         )
         
@@ -119,7 +119,7 @@ class AdminPanel:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.callback_query.edit_message_text(
-            text="📝 **Set Info Menu**\n\nWybierz pole do edycji:",
+            text="📝 **Set Info Menu**\\n\\nWybierz pole do edycji:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
@@ -135,7 +135,7 @@ class AdminPanel:
         )
         
         await update.callback_query.edit_message_text(
-            "📞 **Ustaw Kontakt**\n\n"
+            "📞 **Ustaw Kontakt**\\n\\n"
             "Wyślij nowe informacje kontaktowe:"
         )
     
@@ -149,8 +149,8 @@ class AdminPanel:
         )
         
         await update.callback_query.edit_message_text(
-            "➕ **Dodaj Grupy**\n\n"
-            "Wyślij ID grup oddzielone przecinkami\n"
+            "➕ **Dodaj Grupy**\\n\\n"
+            "Wyślij ID grup oddzielone przecinkami\\n"
             "Przykład: -100123456789, -100987654321"
         )
     
@@ -164,7 +164,7 @@ class AdminPanel:
         )
         
         await update.callback_query.edit_message_text(
-            "➖ **Usuń Grupy**\n\n"
+            "➖ **Usuń Grupy**\\n\\n"
             "Wyślij ID grup do usunięcia oddzielone przecinkami"
         )
     
@@ -173,13 +173,13 @@ class AdminPanel:
         user_id = update.effective_user.id
         chat_id = str(update.effective_chat.id)
         
-        await self.command_bus.user_manager.update_session state(
+        await self.command_bus.user_manager.update_session_state(
             user_id, chat_id, SessionState.SET_TIME
         )
         
         await update.callback_query.edit_message_text(
-            "⏰ **Ustaw Czas**\n\n"
-            "Wyślij interwał w minutach\n"
+            "⏰ **Ustaw Czas**\\n\\n"
+            "Wyślij interwał w minutach\\n"
             "Przykład: 30 (dla 30 minut)"
         )
     
@@ -193,7 +193,7 @@ class AdminPanel:
         )
         
         await update.callback_query.edit_message_text(
-            "⏱️ **Ustaw Ex-Time**\n\n"
+            "⏱️ **Ustaw Ex-Time**\\n\\n"
             "Wyślij specjalny interwał dla wykluczonych grup"
         )
     
@@ -201,11 +201,11 @@ class AdminPanel:
         """Handle status display"""
         # This would fetch real system status
         status_text = (
-            "📊 **Status Systemu**\n\n"
-            "🟢 Bot: Aktywny\n"
-            "🟢 Baza danych: Połączenie OK\n"
-            "🟢 Scheduler: Uruchomiony\n"
-            "📈 Aktywne grupy: 0\n"
+            "📊 **Status Systemu**\\n\\n"
+            "🟢 Bot: Aktywny\\n"
+            "🟢 Baza danych: Połączenie OK\\n"
+            "🟢 Scheduler: Uruchomiony\\n"
+            "📈 Aktywne grupy: 0\\n"
             "⏰ Zaplanowane zadania: 0"
         )
         

@@ -63,5 +63,5 @@ def setup_logging(settings: Settings):
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger on first use=True,
+        cache_logger_on_first_use=True,
     )

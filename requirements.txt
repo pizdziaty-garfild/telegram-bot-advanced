@@ -3,7 +3,7 @@ python-telegram-bot[ext]==21.4
 
 # Async Database & ORM
 SQLAlchemy[asyncio]==2.0.23
-asynccg==0.29.0
+asyncpg==0.29.0
 aiosqlite==0.19.0
 alembic==1.12.1
 
