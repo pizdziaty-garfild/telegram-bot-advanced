@@ -1,4 +1,5 @@
 import logging
+from typing import Iterable
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters
 
@@ -17,28 +18,49 @@ ASK_SET_TIME = 1004
 ASK_SET_EX_TIME = 1005
 
 
+def _normalize_id_set(values: Iterable) -> set[int]:
+    out: set[int] = set()
+    if values is None:
+        return out
+    if isinstance(values, (str, bytes)):
+        raw = str(values)
+        parts = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()]
+    else:
+        parts = list(values)
+    for p in parts:
+        try:
+            out.add(int(str(p).strip()))
+        except Exception:
+            pass
+    return out
+
+
 def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> None:
     admin_cmd = getattr(settings, "admin_command_alias", "pusher")
-    logger.info(f"Registering admin handlers with alias: /{admin_cmd}")
+    owner_ids = _normalize_id_set(getattr(settings, "owner_users", []))
+    admin_ids = _normalize_id_set(getattr(settings, "admin_users", []))
+    logger.info(f"Registering admin handlers with alias: /{admin_cmd}; owners={owner_ids}, admins={admin_ids}")
 
     async def ensure_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         uid = update.effective_user.id if update.effective_user else None
         if not uid:
-            logger.debug(f"ensure_admin: no effective_user.id")
+            logger.debug("ensure_admin: missing effective_user.id")
             return False
         try:
             allowed = await command_bus.rbac.is_admin(uid)
             logger.debug(f"ensure_admin: rbac.is_admin({uid}) = {allowed}")
+            if allowed:
+                return True
         except Exception as e:
-            logger.debug(f"ensure_admin: rbac failed ({e}), checking settings")
-            allowed = (uid in settings.owner_users) or (uid in settings.admin_users)
-            logger.debug(f"ensure_admin: settings check for {uid} = {allowed} (owners={settings.owner_users}, admins={settings.admin_users})")
-        return allowed
+            logger.debug(f"ensure_admin: rbac failed ({e})")
+        env_allow = (uid in owner_ids) or (uid in admin_ids)
+        logger.debug(f"ensure_admin: env fallback for {uid} = {env_allow}")
+        return env_allow
 
     async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"admin_panel called by user {update.effective_user.id if update.effective_user else None}")
         if not await ensure_admin(update, context):
-            logger.warning(f"admin_panel: access denied")
+            logger.warning("admin_panel: access denied")
             return
         kb = [
             [InlineKeyboardButton("Set Info", callback_data="set_info"), InlineKeyboardButton("Set Kontakt", callback_data="set_kontakt")],
@@ -203,7 +225,6 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         else:
             await update.effective_chat.send_message(f"TODO: implement menu action: {data}")
 
-    # Register handlers in proper order: callbacks first, then conversations, commands last
     app.add_handler(CallbackQueryHandler(on_callback))
 
     conv_bulk = ConversationHandler(
@@ -245,5 +266,5 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
 
     app.add_handler(CommandHandler(admin_cmd, admin_panel))
     app.add_handler(CommandHandler("status", status))
-    
-    logger.info(f"Admin handlers registered: /{admin_cmd}, /status, callbacks, conversations")
+
+    logger.info("Admin handlers registered: /%s, /status, callbacks, conversations", admin_cmd)
