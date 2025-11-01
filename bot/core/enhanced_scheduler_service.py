@@ -74,6 +74,32 @@ class EnhancedSchedulerService:
         await self._setup_initial_jobs()
         self.logger.info("Enhanced scheduler started with config watching")
 
+    async def shutdown(self):
+        if self._config_watcher_task:
+            self._config_watcher_task.cancel()
+            try:
+                await self._config_watcher_task
+            except asyncio.CancelledError:
+                pass
+        if self.scheduler:
+            self.scheduler.shutdown(wait=True)
+        self.logger.info("Enhanced scheduler shutdown complete")
+
+    async def _watch_config_changes(self):
+        while True:
+            try:
+                await asyncio.sleep(30)
+                current_hash = await self._get_config_hash()
+                if self._last_config_hash is None:
+                    self._last_config_hash = current_hash
+                    continue
+                if current_hash != self._last_config_hash:
+                    self.logger.info("Config changes detected, regenerating jobs...")
+                    await self._regenerate_all_jobs()
+                    self._last_config_hash = current_hash
+            except Exception as e:
+                self.logger.error(f"Error in config watcher: {e}")
+
     async def _setup_initial_jobs(self):
         try:
             global_interval = await self._get_global_interval()
@@ -111,17 +137,6 @@ class EnhancedSchedulerService:
             self._job_metrics["total_retries"] += 1
         else:
             self.logger.debug(f"Job {event.job_id} executed successfully")
-
-    async def shutdown(self):
-        if self._config_watcher_task:
-            self._config_watcher_task.cancel()
-            try:
-                await self._config_watcher_task
-            except asyncio.CancelledError:
-                pass
-        if self.scheduler:
-            self.scheduler.shutdown(wait=True)
-        self.logger.info("Enhanced scheduler shutdown complete")
 
     async def _get_global_interval(self) -> Optional[int]:
         try:
@@ -167,4 +182,15 @@ class EnhancedSchedulerService:
             self.logger.error(f"Failed to get config hash: {e}")
             return str(datetime.utcnow().timestamp())
 
-    # (execute job and metrics methods unchanged from previous commit)
+    async def _regenerate_all_jobs(self):
+        try:
+            for job_id in list(self._active_jobs.keys()):
+                if self.scheduler.get_job(job_id):
+                    self.scheduler.remove_job(job_id)
+                del self._active_jobs[job_id]
+            await self._setup_initial_jobs()
+            self.logger.info("All jobs regenerated successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to regenerate jobs: {e}")
+
+    # (execute job and metrics methods remain as previously committed)
