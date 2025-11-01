@@ -1,0 +1,31 @@
+# Core Telegram Bot Dependencies
+python-telegram-bot>=20.7
+
+# Settings and Configuration
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Database
+sqlalchemy>=2.0.0
+aiosqlite>=0.19.0
+alembic>=1.13.0
+
+# Scheduler and Jobs
+apscheduler>=3.10.0
+tenacity>=8.2.0
+pytz>=2023.3
+
+# Async Support
+aiofiles>=23.2.0
+
+# Monitoring (Optional)
+sentry-sdk>=1.38.0
+
+# Development and Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.9.0
+isort>=5.12.0
+
+# Windows Support
+colorama>=0.4.6
