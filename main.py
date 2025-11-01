@@ -5,16 +5,15 @@ Main Application Entry Point - Enhanced with Scheduler and Migrations
 import os
 import sys
 import traceback
-
-# Ensure project root on sys.path
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
 import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
+
+try:
+    import signal
+except Exception:
+    signal = None
 
 from telegram.ext import Application
 
@@ -28,6 +27,11 @@ from bot.core.enhanced_rbac_manager import EnhancedRBACManager
 from bot.core.command_bus import CommandBus
 from bot.handlers.user_commands import setup_user_handlers
 from bot.handlers.admin_commands import setup_admin_handlers
+
+# Ensure project root on sys.path
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 logger = logging.getLogger(__name__)
 
@@ -43,33 +47,69 @@ class EnhancedTelegramBot:
         self.telemetry: Optional[TelemetryManager] = None
         self.application: Optional[Application] = None
         self._shutdown_event = asyncio.Event()
+        self._stdin_task: Optional[asyncio.Task] = None
+
+    async def _stdin_watcher(self):
+        """Watch stdin for 'q' + Enter to trigger graceful shutdown (Windows-friendly)."""
+        loop = asyncio.get_running_loop()
+        while not self._shutdown_event.is_set():
+            try:
+                line = await asyncio.to_thread(sys.stdin.readline)
+                if not line:
+                    await asyncio.sleep(0.1)
+                    continue
+                if line.strip().lower() == "q":
+                    logger.info("'q' received on stdin — initiating shutdown...")
+                    self._shutdown_event.set()
+                    break
+            except Exception as e:
+                logger.debug(f"stdin watcher error: {e}")
+                await asyncio.sleep(0.2)
+
+    def _install_signal_handlers(self):
+        if not signal:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            for sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)):
+                if sig is None:
+                    continue
+                try:
+                    loop.add_signal_handler(sig, self._shutdown_event.set)
+                except NotImplementedError:
+                    # Windows may not support add_signal_handler
+                    pass
+        except Exception:
+            pass
 
     async def initialize(self):
         try:
             setup_logging(self.settings)
             logger.info("Enhanced Telegram Bot starting...")
 
-            logger.debug("STEP 1: Telemetry init")
+            # Signal + stdin shutdown helpers
+            self._install_signal_handlers()
+            self._stdin_task = asyncio.create_task(self._stdin_watcher())
+
+            # Telemetry
             if self.settings.sentry_dsn:
                 self.telemetry = TelemetryManager(self.settings)
                 await self.telemetry.initialize()
 
-            logger.debug("STEP 2: DatabaseManager init")
+            # Database
             self.database = DatabaseManager()
             await self.database.initialize()
 
-            logger.debug("STEP 3: EnhancedUserManager init")
+            # Core services
             self.user_manager = EnhancedUserManager(self.database, self.settings)
             await self.user_manager.initialize()
-
-            logger.debug("STEP 4: RBAC init")
             self.rbac = EnhancedRBACManager(self.user_manager)
 
-            logger.debug("STEP 5: Scheduler init")
+            # Scheduler
             self.scheduler = EnhancedSchedulerService(self.database, self.settings)
             await self.scheduler.initialize()
 
-            logger.debug("STEP 6: CommandBus init")
+            # Command bus
             self.command_bus = CommandBus(
                 database=self.database,
                 user_manager=self.user_manager,
@@ -77,10 +117,8 @@ class EnhancedTelegramBot:
                 scheduler=self.scheduler,
             )
 
-            logger.debug("STEP 7: Telegram Application init")
+            # Telegram
             self.application = Application.builder().token(self.settings.bot_token).build()
-
-            logger.debug("STEP 8: Handlers setup")
             setup_user_handlers(self.application, self.command_bus, self.settings)
             setup_admin_handlers(self.application, self.command_bus, self.settings)
 
@@ -92,16 +130,13 @@ class EnhancedTelegramBot:
 
     async def start_polling(self):
         try:
-            logger.debug("STEP 9: Scheduler start")
             await self.scheduler.start()
 
-            logger.debug("STEP 10: Telegram polling start")
             await self.application.initialize()
             await self.application.start()
-            # PTB v20+: Updater.start_polling no longer supports read/write/connect/pool timeout args
             await self.application.updater.start_polling(poll_interval=1.0)
 
-            logger.info("Bot is running in polling mode. Press Ctrl+C to stop.")
+            logger.info("Bot is running in polling mode. Press Ctrl+C or type 'q' + Enter to stop.")
             await self._shutdown_event.wait()
         except Exception as e:
             logger.error(f"Polling mode failed: {e}")
@@ -123,11 +158,15 @@ class EnhancedTelegramBot:
                 await self.database.close()
             if self.telemetry:
                 await self.telemetry.shutdown()
+            if self._stdin_task:
+                self._stdin_task.cancel()
+                try:
+                    await self._stdin_task
+                except asyncio.CancelledError:
+                    pass
             logger.info("Enhanced bot shutdown complete")
         except Exception as e:
             logger.error(f"Shutdown error: {e}")
-        finally:
-            self._shutdown_event.set()
 
 
 async def main():
@@ -136,7 +175,7 @@ async def main():
         await bot.initialize()
         await bot.start_polling()
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
+        logger.info("Application interrupted by user")
     except Exception as e:
         logger.error(f"Bot failed: {e}")
         logger.error("TRACE:\n" + traceback.format_exc())
