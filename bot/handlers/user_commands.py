@@ -1,15 +1,16 @@
 import logging
-from telegram.ext import Application, CommandHandler
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
 
 def setup_user_handlers(app: Application, command_bus, settings) -> None:
-    async def start(update, context):
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Hello! Bot is running.")
 
-    async def info(update, context):
-        from sqlalchemy import text
+    async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             async with command_bus.database.get_session() as db:
                 result = await db.execute(text("SELECT value FROM config WHERE key = 'info_text'"))
@@ -19,8 +20,7 @@ def setup_user_handlers(app: Application, command_bus, settings) -> None:
             info_text = "Info placeholder (config not available)."
         await context.bot.send_message(chat_id=update.effective_chat.id, text=info_text)
 
-    async def kontakt(update, context):
-        from sqlalchemy import text
+    async def kontakt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             async with command_bus.database.get_session() as db:
                 result = await db.execute(text("SELECT value FROM config WHERE key = 'kontakt_text'"))
@@ -30,17 +30,14 @@ def setup_user_handlers(app: Application, command_bus, settings) -> None:
             kontakt_text = "Kontakt placeholder (config not available)."
         await context.bot.send_message(chat_id=update.effective_chat.id, text=kontakt_text)
 
-    async def test(update, context):
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="TEST działa!")
+    async def status_basic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        stats = await command_bus.user_manager.get_session_stats()
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Status (basic): {stats}")
 
-    # Tymczasowy diagnostyczny alias admin panelu bez RBAC
-    async def pusher_basic(update, context):
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Admin Menu (basic). Jeśli to widzisz, admin_commands.py się nie podpiął.")
-
+    # Zostawiamy tylko userowe komendy, usuwamy /pusher basic aby nie blokował adminowego
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("kontakt", kontakt))
-    app.add_handler(CommandHandler("test", test))
-    app.add_handler(CommandHandler("pusher", pusher_basic))
+    app.add_handler(CommandHandler("status", status_basic))
 
-    logger.info("User handlers registered: /start, /info, /kontakt, /test, /pusher (basic)")
+    logger.info("User handlers registered: /start, /info, /kontakt, /status (basic)")
