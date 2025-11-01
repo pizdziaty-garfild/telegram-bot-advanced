@@ -1,10 +1,14 @@
+import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters
+
+from sqlalchemy import text
 
 from bot.core.enhanced_rbac_manager import EnhancedRBACManager
 from config.settings import Settings
 from bot.services.groups_service import GroupsService
-from bot.services.config_service import ConfigService
+
+logger = logging.getLogger(__name__)
 
 ASK_BULK_GROUPS = 1001
 ASK_SET_INFO = 1002
@@ -15,20 +19,26 @@ ASK_SET_EX_TIME = 1005
 
 def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> None:
     admin_cmd = getattr(settings, "admin_command_alias", "pusher")
+    logger.info(f"Registering admin handlers with alias: /{admin_cmd}")
 
     async def ensure_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         uid = update.effective_user.id if update.effective_user else None
         if not uid:
+            logger.debug(f"ensure_admin: no effective_user.id")
             return False
-        # Fallback: jeśli DB nie gotowe, sprawdź Settings
         try:
             allowed = await command_bus.rbac.is_admin(uid)
-        except Exception:
+            logger.debug(f"ensure_admin: rbac.is_admin({uid}) = {allowed}")
+        except Exception as e:
+            logger.debug(f"ensure_admin: rbac failed ({e}), checking settings")
             allowed = (uid in settings.owner_users) or (uid in settings.admin_users)
+            logger.debug(f"ensure_admin: settings check for {uid} = {allowed} (owners={settings.owner_users}, admins={settings.admin_users})")
         return allowed
 
     async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.info(f"admin_panel called by user {update.effective_user.id if update.effective_user else None}")
         if not await ensure_admin(update, context):
+            logger.warning(f"admin_panel: access denied")
             return
         kb = [
             [InlineKeyboardButton("Set Info", callback_data="set_info"), InlineKeyboardButton("Set Kontakt", callback_data="set_kontakt")],
@@ -38,6 +48,7 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         await update.effective_chat.send_message("Admin Panel", reply_markup=InlineKeyboardMarkup(kb))
 
     async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.info(f"status called by user {update.effective_user.id if update.effective_user else None}")
         if not await ensure_admin(update, context):
             return
         stats = await command_bus.user_manager.get_session_stats()
@@ -65,7 +76,7 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         text_blob = update.message.text or ""
         svc = GroupsService(command_bus.database)
         added, skipped = await svc.add_groups_bulk(text_blob)
-        await update.effective_chat.send_message(f"Dodano: {added}, Pominieto: {skipped}")
+        await update.effective_chat.send_message(f"Dodano: {added}, Pominięto: {skipped}")
         return ConversationHandler.END
 
     async def on_set_info_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,11 +90,13 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             return ConversationHandler.END
         text_val = update.message.text or ""
         async with command_bus.database.get_session() as db:
-            await db.execute(text("""
+            await db.execute(text(
+                """
                 INSERT INTO config (key, value, created_at, updated_at)
                 VALUES ('info_text', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-            """), {"val": text_val})
+                """
+            ), {"val": text_val})
             await db.commit()
         await update.effective_chat.send_message("Zapisano INFO.")
         return ConversationHandler.END
@@ -99,11 +112,13 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             return ConversationHandler.END
         text_val = update.message.text or ""
         async with command_bus.database.get_session() as db:
-            await db.execute(text("""
+            await db.execute(text(
+                """
                 INSERT INTO config (key, value, created_at, updated_at)
                 VALUES ('kontakt_text', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-            """), {"val": text_val})
+                """
+            ), {"val": text_val})
             await db.commit()
         await update.effective_chat.send_message("Zapisano KONTAKT.")
         return ConversationHandler.END
@@ -125,11 +140,13 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             await update.effective_chat.send_message("Nieprawidłowa liczba. Spróbuj ponownie.")
             return ConversationHandler.END
         async with command_bus.database.get_session() as db:
-            await db.execute(text("""
+            await db.execute(text(
+                """
                 INSERT INTO config (key, value, created_at, updated_at)
                 VALUES ('global_interval_minutes', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-            """), {"val": str(minutes)})
+                """
+            ), {"val": str(minutes)})
             await db.commit()
         await update.effective_chat.send_message(f"Zapisano globalny interwał: {minutes} min")
         return ConversationHandler.END
@@ -151,11 +168,13 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             await update.effective_chat.send_message("Nieprawidłowa liczba. Spróbuj ponownie.")
             return ConversationHandler.END
         async with command_bus.database.get_session() as db:
-            await db.execute(text("""
+            await db.execute(text(
+                """
                 INSERT INTO config (key, value, created_at, updated_at)
                 VALUES ('excluded_interval_minutes', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-            """), {"val": str(minutes)})
+                """
+            ), {"val": str(minutes)})
             await db.commit()
         await update.effective_chat.send_message(f"Zapisano Ex-Time: {minutes} min")
         return ConversationHandler.END
@@ -165,6 +184,7 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
             return
         query = update.callback_query
         data = query.data if query else ""
+        logger.debug(f"Callback received: {data}")
         await query.answer()
         if data == "groups":
             await on_groups_menu(update, context)
@@ -181,16 +201,11 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         elif data == "status":
             await status(update, context)
         else:
-            await update.effective_chat.send_message("TODO: implement menu action")
+            await update.effective_chat.send_message(f"TODO: implement menu action: {data}")
 
-    # Commands
-    app.add_handler(CommandHandler(admin_cmd, admin_panel))
-    app.add_handler(CommandHandler("status", status))
-
-    # Callback handler for inline menu
+    # Register handlers in proper order: callbacks first, then conversations, commands last
     app.add_handler(CallbackQueryHandler(on_callback))
 
-    # Conversations
     conv_bulk = ConversationHandler(
         entry_points=[CallbackQueryHandler(on_groups_bulk_start, pattern="^groups_bulk$")],
         states={ASK_BULK_GROUPS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_groups_bulk_receive)]},
@@ -227,3 +242,8 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
     app.add_handler(conv_kontakt)
     app.add_handler(conv_time)
     app.add_handler(conv_ex_time)
+
+    app.add_handler(CommandHandler(admin_cmd, admin_panel))
+    app.add_handler(CommandHandler("status", status))
+    
+    logger.info(f"Admin handlers registered: /{admin_cmd}, /status, callbacks, conversations")
