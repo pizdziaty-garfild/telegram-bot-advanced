@@ -25,7 +25,8 @@ from bot.infra.logging import setup_logging
 from bot.infra.database import DatabaseManager
 from bot.infra.telemetry import TelemetryManager
 from bot.core.enhanced_scheduler_service import EnhancedSchedulerService
-from bot.core.enhanced_user_manager import EnhancedUserManager, EnhancedRBACManager
+from bot.core.enhanced_user_manager import EnhancedUserManager
+from bot.core.enhanced_rbac_manager import EnhancedRBACManager
 from bot.core.command_bus import CommandBus
 from bot.handlers.user_commands import setup_user_handlers
 from bot.handlers.admin_commands import setup_admin_handlers
@@ -64,9 +65,6 @@ class EnhancedTelegramBot:
             # Initialize database
             self.database = DatabaseManager(self.settings.get_db_config())
             await self.database.initialize()
-
-            # Run migrations if enabled
-            # (Handled externally by migrations.py or CI; optional auto-run skipped for compatibility)
 
             # Initialize enhanced components
             self.user_manager = EnhancedUserManager(self.database, self.settings)
