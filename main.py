@@ -4,6 +4,7 @@ Main Application Entry Point - Enhanced with Scheduler and Migrations
 
 import os
 import sys
+import traceback
 
 # Ensure project root on sys.path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,22 +49,27 @@ class EnhancedTelegramBot:
             setup_logging(self.settings)
             logger.info("Enhanced Telegram Bot starting...")
 
+            logger.debug("STEP 1: Telemetry init")
             if self.settings.sentry_dsn:
                 self.telemetry = TelemetryManager(self.settings)
                 await self.telemetry.initialize()
 
-            # Initialize database (DatabaseManager reads Settings internally)
+            logger.debug("STEP 2: DatabaseManager init")
             self.database = DatabaseManager()
             await self.database.initialize()
 
+            logger.debug("STEP 3: EnhancedUserManager init")
             self.user_manager = EnhancedUserManager(self.database, self.settings)
             await self.user_manager.initialize()
 
+            logger.debug("STEP 4: RBAC init")
             self.rbac = EnhancedRBACManager(self.user_manager)
 
+            logger.debug("STEP 5: Scheduler init")
             self.scheduler = EnhancedSchedulerService(self.database, self.settings)
             await self.scheduler.initialize()
 
+            logger.debug("STEP 6: CommandBus init")
             self.command_bus = CommandBus(
                 database=self.database,
                 user_manager=self.user_manager,
@@ -71,22 +77,25 @@ class EnhancedTelegramBot:
                 scheduler=self.scheduler,
             )
 
+            logger.debug("STEP 7: Telegram Application init")
             self.application = Application.builder().token(self.settings.bot_token).build()
 
+            logger.debug("STEP 8: Handlers setup")
             setup_user_handlers(self.application, self.command_bus, self.settings)
             setup_admin_handlers(self.application, self.command_bus, self.settings)
 
             logger.info("Enhanced bot initialization complete")
         except Exception as e:
             logger.error(f"Bot initialization failed: {e}")
+            logger.error("TRACE:\n" + traceback.format_exc())
             raise
 
     async def start_polling(self):
         try:
-            logger.info("Starting enhanced scheduler...")
+            logger.debug("STEP 9: Scheduler start")
             await self.scheduler.start()
 
-            logger.info("Starting bot in polling mode...")
+            logger.debug("STEP 10: Telegram polling start")
             await self.application.initialize()
             await self.application.start()
             await self.application.updater.start_polling(
@@ -103,6 +112,7 @@ class EnhancedTelegramBot:
             await self._shutdown_event.wait()
         except Exception as e:
             logger.error(f"Polling mode failed: {e}")
+            logger.error("TRACE:\n" + traceback.format_exc())
             raise
 
     async def shutdown(self):
@@ -136,6 +146,7 @@ async def main():
         logger.info("Keyboard interrupt received")
     except Exception as e:
         logger.error(f"Bot failed: {e}")
+        logger.error("TRACE:\n" + traceback.format_exc())
         sys.exit(1)
     finally:
         await bot.shutdown()
@@ -151,4 +162,5 @@ if __name__ == "__main__":
         logger.info("Application interrupted by user")
     except Exception as e:
         logger.error(f"Application failed: {e}")
+        logger.error("TRACE:\n" + traceback.format_exc())
         sys.exit(1)
