@@ -1,23 +1,24 @@
 """
 Enhanced User Manager - Session Management with Statistics
-
-This version removes direct import of EnhancedRBACManager from here
-and expects it to be imported separately from bot.core.enhanced_rbac_manager
 """
 
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, Any
+
+from sqlalchemy import text
 
 from bot.infra.database import DatabaseManager
-from bot.domain.models import User, Session, Role, Permission, SessionState
+from bot.domain.models import User, Session, Role, SessionState
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+
 class EnhancedUserManager:
     """Enhanced user and session management with statistics"""
+
     def __init__(self, database: DatabaseManager, settings: Settings):
         self.database = database
         self.settings = settings
@@ -47,13 +48,15 @@ class EnhancedUserManager:
         try:
             async with self.database.get_session() as db:
                 sessions_result = await db.execute(
-                    """
-                    SELECT s.*, u.telegram_id, u.role, u.is_active
-                    FROM sessions s
-                    JOIN users u ON s.user_id = u.id
-                    WHERE s.is_active = true
-                    AND (s.expires_at IS NULL OR s.expires_at > :now)
-                    """,
+                    text(
+                        """
+                        SELECT s.*, u.telegram_id, u.role, u.is_active
+                        FROM sessions s
+                        JOIN users u ON s.user_id = u.id
+                        WHERE s.is_active = true
+                        AND (s.expires_at IS NULL OR s.expires_at > :now)
+                        """
+                    ),
                     {"now": datetime.utcnow()},
                 )
                 sessions_loaded = 0
@@ -75,7 +78,7 @@ class EnhancedUserManager:
                     self._session_cache[session_key] = session
                     sessions_loaded += 1
 
-                users_result = await db.execute("SELECT * FROM users WHERE is_active = true")
+                users_result = await db.execute(text("SELECT * FROM users WHERE is_active = true"))
                 users_loaded = 0
                 for row in users_result.fetchall():
                     user = User(
@@ -114,11 +117,13 @@ class EnhancedUserManager:
         try:
             async with self.database.get_session() as db:
                 session_result = await db.execute(
-                    """
-                    INSERT INTO sessions (user_id, chat_id, state, is_active, expires_at, created_at, updated_at, last_activity_at)
-                    VALUES (:user_id, :chat_id, :state, true, :expires_at, :now, :now, :now)
-                    RETURNING *
-                    """,
+                    text(
+                        """
+                        INSERT INTO sessions (user_id, chat_id, state, is_active, expires_at, created_at, updated_at, last_activity_at)
+                        VALUES (:user_id, :chat_id, :state, true, :expires_at, :now, :now, :now)
+                        RETURNING *
+                        """
+                    ),
                     {
                         "user_id": user.id,
                         "chat_id": chat_id,
@@ -154,7 +159,7 @@ class EnhancedUserManager:
         try:
             async with self.database.get_session() as db:
                 user_result = await db.execute(
-                    "SELECT * FROM users WHERE telegram_id = :telegram_id",
+                    text("SELECT * FROM users WHERE telegram_id = :telegram_id"),
                     {"telegram_id": telegram_id},
                 )
                 user_row = user_result.fetchone()
@@ -176,11 +181,13 @@ class EnhancedUserManager:
                     )
                 else:
                     user_result = await db.execute(
-                        """
-                        INSERT INTO users (telegram_id, role, is_active, created_at, updated_at, last_seen_at)
-                        VALUES (:telegram_id, :role, true, :now, :now, :now)
-                        RETURNING *
-                        """,
+                        text(
+                            """
+                            INSERT INTO users (telegram_id, role, is_active, created_at, updated_at, last_seen_at)
+                            VALUES (:telegram_id, :role, true, :now, :now, :now)
+                            RETURNING *
+                            """
+                        ),
                         {"telegram_id": telegram_id, "role": Role.USER, "now": datetime.utcnow()},
                     )
                     user_row = user_result.fetchone()
@@ -217,11 +224,13 @@ class EnhancedUserManager:
             try:
                 async with self.database.get_session() as db:
                     await db.execute(
-                        """
-                        UPDATE sessions 
-                        SET state = :state, state_data = :state_data, updated_at = :now, last_activity_at = :now
-                        WHERE id = :session_id
-                        """,
+                        text(
+                            """
+                            UPDATE sessions 
+                            SET state = :state, state_data = :state_data, updated_at = :now, last_activity_at = :now
+                            WHERE id = :session_id
+                            """
+                        ),
                         {"state": state, "state_data": state_data, "session_id": session.id, "now": datetime.utcnow()},
                     )
                     await db.commit()
@@ -236,10 +245,7 @@ class EnhancedUserManager:
             session = self._session_cache[session_key]
             try:
                 async with self.database.get_session() as db:
-                    await db.execute(
-                        "UPDATE sessions SET is_active = false WHERE id = :session_id",
-                        {"session_id": session.id},
-                    )
+                    await db.execute(text("UPDATE sessions SET is_active = false WHERE id = :session_id"), {"session_id": session.id})
                     await db.commit()
                 del self._session_cache[session_key]
             except Exception as e:
@@ -263,6 +269,20 @@ class EnhancedUserManager:
                     expired_keys.append(session_key)
             for key in expired_keys:
                 await self._expire_session(key)
+
+            async with self.database.get_session() as db:
+                await db.execute(
+                    text(
+                        """
+                        UPDATE sessions 
+                        SET is_active = false 
+                        WHERE is_active = true 
+                        AND (expires_at < :now OR last_activity_at < :week_ago)
+                        """
+                    ),
+                    {"now": datetime.utcnow(), "week_ago": datetime.utcnow() - timedelta(days=7)},
+                )
+                await db.commit()
         except Exception as e:
             self.logger.error(f"Failed to cleanup sessions: {e}")
 
@@ -270,25 +290,29 @@ class EnhancedUserManager:
         try:
             self._stats["cached_sessions"] = len(self._session_cache)
             async with self.database.get_session() as db:
-                active_result = await db.execute("SELECT COUNT(*) as count FROM sessions WHERE is_active = true")
+                active_result = await db.execute(text("SELECT COUNT(*) as count FROM sessions WHERE is_active = true"))
                 self._stats["active_sessions"] = active_result.fetchone().count
                 auth_result = await db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM sessions s
-                    JOIN users u ON s.user_id = u.id
-                    WHERE s.is_active = true AND u.role != 'user'
-                    """
+                    text(
+                        """
+                        SELECT COUNT(*) as count FROM sessions s
+                        JOIN users u ON s.user_id = u.id
+                        WHERE s.is_active = true AND u.role != 'user'
+                        """
+                    )
                 )
                 self._stats["authenticated_sessions"] = auth_result.fetchone().count
-                users_result = await db.execute("SELECT COUNT(*) as count FROM users WHERE is_active = true")
+                users_result = await db.execute(text("SELECT COUNT(*) as count FROM users WHERE is_active = true"))
                 self._stats["total_users"] = users_result.fetchone().count
                 states_result = await db.execute(
-                    """
-                    SELECT state, COUNT(*) as count 
-                    FROM sessions 
-                    WHERE is_active = true 
-                    GROUP BY state
-                    """
+                    text(
+                        """
+                        SELECT state, COUNT(*) as count 
+                        FROM sessions 
+                        WHERE is_active = true 
+                        GROUP BY state
+                        """
+                    )
                 )
                 state_distribution = {row.state: row.count for row in states_result.fetchall()}
                 return {
