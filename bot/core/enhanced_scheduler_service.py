@@ -105,6 +105,24 @@ class EnhancedSchedulerService:
         except Exception as e:
             self.logger.error(f"Failed to setup initial jobs: {e}")
 
+    def _job_event_listener(self, event):
+        if event.exception:
+            self.logger.warning(f"Job {event.job_id} failed with exception: {event.exception}")
+            self._job_metrics["total_retries"] += 1
+        else:
+            self.logger.debug(f"Job {event.job_id} executed successfully")
+
+    async def shutdown(self):
+        if self._config_watcher_task:
+            self._config_watcher_task.cancel()
+            try:
+                await self._config_watcher_task
+            except asyncio.CancelledError:
+                pass
+        if self.scheduler:
+            self.scheduler.shutdown(wait=True)
+        self.logger.info("Enhanced scheduler shutdown complete")
+
     async def _get_global_interval(self) -> Optional[int]:
         try:
             async with self.database.get_session() as db:
@@ -149,4 +167,4 @@ class EnhancedSchedulerService:
             self.logger.error(f"Failed to get config hash: {e}")
             return str(datetime.utcnow().timestamp())
 
-    # ... rest unchanged ...
+    # (execute job and metrics methods unchanged from previous commit)
