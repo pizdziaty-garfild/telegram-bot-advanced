@@ -26,7 +26,14 @@ from bot.core.enhanced_user_manager import EnhancedUserManager
 from bot.core.enhanced_rbac_manager import EnhancedRBACManager
 from bot.core.command_bus import CommandBus
 from bot.handlers.user_commands import setup_user_handlers
-from bot.handlers.admin_commands import setup_admin_handlers
+
+# NOTE: admin handlers import wrapped in try/except for diagnostics
+try:
+    from bot.handlers.admin_commands import setup_admin_handlers
+    ADMIN_IMPORT_OK = True
+except Exception as e:
+    ADMIN_IMPORT_OK = False
+    ADMIN_IMPORT_ERR = e
 
 # Ensure project root on sys.path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,7 +57,6 @@ class EnhancedTelegramBot:
         self._stdin_task: Optional[asyncio.Task] = None
 
     async def _stdin_watcher(self):
-        """Watch stdin for 'q' + Enter to trigger graceful shutdown (Windows-friendly)."""
         loop = asyncio.get_running_loop()
         while not self._shutdown_event.is_set():
             try:
@@ -77,7 +83,6 @@ class EnhancedTelegramBot:
                 try:
                     loop.add_signal_handler(sig, self._shutdown_event.set)
                 except NotImplementedError:
-                    # Windows may not support add_signal_handler
                     pass
         except Exception:
             pass
@@ -87,29 +92,23 @@ class EnhancedTelegramBot:
             setup_logging(self.settings)
             logger.info("Enhanced Telegram Bot starting...")
 
-            # Signal + stdin shutdown helpers
             self._install_signal_handlers()
             self._stdin_task = asyncio.create_task(self._stdin_watcher())
 
-            # Telemetry
             if self.settings.sentry_dsn:
                 self.telemetry = TelemetryManager(self.settings)
                 await self.telemetry.initialize()
 
-            # Database
             self.database = DatabaseManager()
             await self.database.initialize()
 
-            # Core services
             self.user_manager = EnhancedUserManager(self.database, self.settings)
             await self.user_manager.initialize()
             self.rbac = EnhancedRBACManager(self.user_manager)
 
-            # Scheduler
             self.scheduler = EnhancedSchedulerService(self.database, self.settings)
             await self.scheduler.initialize()
 
-            # Command bus
             self.command_bus = CommandBus(
                 database=self.database,
                 user_manager=self.user_manager,
@@ -117,10 +116,22 @@ class EnhancedTelegramBot:
                 scheduler=self.scheduler,
             )
 
-            # Telegram
             self.application = Application.builder().token(self.settings.bot_token).build()
+
+            # Register user handlers always
             setup_user_handlers(self.application, self.command_bus, self.settings)
-            setup_admin_handlers(self.application, self.command_bus, self.settings)
+
+            # Try to register admin handlers; if import failed, log error and continue
+            if ADMIN_IMPORT_OK:
+                try:
+                    from bot.handlers.admin_commands import setup_admin_handlers as _setup_admin
+                    _setup_admin(self.application, self.command_bus, self.settings)
+                    logger.info("Admin handlers registered successfully")
+                except Exception as e:
+                    logger.error(f"Admin handlers registration failed: {e}")
+                    logger.error("TRACE:\n" + traceback.format_exc())
+            else:
+                logger.error(f"Admin handlers import failed: {ADMIN_IMPORT_ERR}")
 
             logger.info("Enhanced bot initialization complete")
         except Exception as e:
