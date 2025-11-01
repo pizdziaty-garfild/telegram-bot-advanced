@@ -10,6 +10,8 @@ from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from sqlalchemy import text
+
 from config.settings import Settings
 from bot.infra.database import DatabaseManager
 from bot.services.config_service import ConfigService
@@ -46,7 +48,8 @@ class EnhancedSchedulerService:
     async def initialize(self):
         try:
             jobstores = {"default": MemoryJobStore()}
-            executors = {"default": AsyncIOExecutor(max_workers=int(self.settings.scheduler_max_workers or 1))}
+            # AsyncIOExecutor in APScheduler 3.x doesn't accept max_workers; use default
+            executors = {"default": AsyncIOExecutor()}
             job_defaults = {
                 "coalesce": True,
                 "max_instances": 1,
@@ -219,7 +222,7 @@ class EnhancedSchedulerService:
     async def _get_global_interval(self) -> Optional[int]:
         try:
             async with self.database.get_session() as db:
-                result = await db.execute("SELECT value FROM config WHERE key = 'global_interval_minutes'")
+                result = await db.execute(text("SELECT value FROM config WHERE key = 'global_interval_minutes'"))
                 row = result.fetchone()
                 if row and row.value:
                     import json
@@ -234,7 +237,7 @@ class EnhancedSchedulerService:
     async def _get_excluded_interval(self) -> Optional[int]:
         try:
             async with self.database.get_session() as db:
-                result = await db.execute("SELECT value FROM config WHERE key = 'excluded_interval_minutes'")
+                result = await db.execute(text("SELECT value FROM config WHERE key = 'excluded_interval_minutes'"))
                 row = result.fetchone()
                 if row and row.value:
                     import json
