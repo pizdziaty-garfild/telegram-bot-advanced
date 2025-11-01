@@ -25,7 +25,7 @@ from bot.core.enhanced_scheduler_service import EnhancedSchedulerService
 from bot.core.enhanced_user_manager import EnhancedUserManager
 from bot.core.enhanced_rbac_manager import EnhancedRBACManager
 from bot.core.command_bus import CommandBus
-from bot.handlers.user_commands import setup_user_handlers
+from bot.handlers.user_commands import setup_user_handlers, setup_bot_commands
 
 # NOTE: admin handlers import wrapped in try/except for diagnostics
 try:
@@ -145,6 +145,10 @@ class EnhancedTelegramBot:
 
             await self.application.initialize()
             await self.application.start()
+            
+            # Set visible bot commands (2.2.1)
+            await setup_bot_commands(self.application)
+            
             await self.application.updater.start_polling(poll_interval=1.0)
 
             logger.info("Bot is running in polling mode. Press Ctrl+C or type 'q' + Enter to stop.")

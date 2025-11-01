@@ -1,7 +1,7 @@
 import logging
 from typing import Iterable
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
 from sqlalchemy import text
 
@@ -10,14 +10,6 @@ from config.settings import Settings
 from bot.services.groups_service import GroupsService
 
 logger = logging.getLogger(__name__)
-
-ASK_BULK_GROUPS = 1001
-ASK_SET_INFO = 1002
-ASK_SET_KONTAKT = 1003
-ASK_SET_TIME = 1004
-ASK_SET_EX_TIME = 1005
-ASK_GROUPS_ADD = 1006
-ASK_GROUPS_DEL = 1007
 
 
 def _normalize_id_set(values: Iterable) -> set[int]:
@@ -84,14 +76,13 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         kb = [
             [InlineKeyboardButton("Add", callback_data="groups_add"), InlineKeyboardButton("Delete", callback_data="groups_del")],
             [InlineKeyboardButton("List", callback_data="groups_list"), InlineKeyboardButton("Bulk Add", callback_data="groups_bulk")],
-            [InlineKeyboardButton("Back", callback_data="back")],
+            [InlineKeyboardButton("Back", callback_data="back_to_main")],
         ]
         await update.effective_chat.send_message("Groups Menu", reply_markup=InlineKeyboardMarkup(kb))
 
     async def groups_list_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await ensure_admin(update, context):
             return
-        from bot.services.groups_service import GroupsService
         svc = GroupsService(command_bus.database)
         page = await svc.list_groups(page=1, per_page=50)
         if not page.groups:
@@ -100,242 +91,49 @@ def setup_admin_handlers(app: Application, command_bus, settings: Settings) -> N
         lines = [f"{g.telegram_id}: {g.title}" for g in page.groups]
         await update.effective_chat.send_message("Lista grup:\n" + "\n".join(lines))
 
-    async def on_groups_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        await update.effective_chat.send_message("Podaj identyfikator grupy (chat_id lub @username)")
-        return ASK_GROUPS_ADD
-
-    async def on_groups_add_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        ident = (update.message.text or "").strip()
-        from bot.services.groups_service import GroupsService
-        svc = GroupsService(command_bus.database)
-        added, skipped = await svc.add_groups_bulk(ident)
-        await update.effective_chat.send_message(f"Dodano: {added}, Pominięto: {skipped}")
-        return ConversationHandler.END
-
-    async def on_groups_del_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        await update.effective_chat.send_message("Podaj ID (z listy) do usunięcia (po jednym na wiadomość)")
-        return ASK_GROUPS_DEL
-
-    async def on_groups_del_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        ident = (update.message.text or "").strip()
-        try:
-            async with command_bus.database.get_session() as db:
-                await db.execute(text("DELETE FROM groups WHERE id = :id"), {"id": int(ident)})
-                await db.commit()
-            await update.effective_chat.send_message(f"Usunięto grupę ID={ident}")
-        except Exception as e:
-            await update.effective_chat.send_message(f"Błąd usuwania: {e}")
-        return ConversationHandler.END
-
-    async def on_groups_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        await update.effective_chat.send_message("Wklej listę grup (każda linia = chat_id lub @username)")
-        return ASK_BULK_GROUPS
-
-    async def on_groups_bulk_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        text_blob = update.message.text or ""
-        svc = GroupsService(command_bus.database)
-        added, skipped = await svc.add_groups_bulk(text_blob)
-        await update.effective_chat.send_message(f"Dodano: {added}, Pominięto: {skipped}")
-        return ConversationHandler.END
-
-    async def on_set_info_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        await update.effective_chat.send_message("Wklej treść INFO (zastąpi obecną)")
-        return ASK_SET_INFO
-
-    async def on_set_info_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        text_val = update.message.text or ""
-        async with command_bus.database.get_session() as db:
-            await db.execute(text(
-                """
-                INSERT INTO config (key, value, created_at, updated_at)
-                VALUES ('info_text', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-                """
-            ), {"val": text_val})
-            await db.commit()
-        await update.effective_chat.send_message("Zapisano INFO.")
-        return ConversationHandler.END
-
-    async def on_set_kontakt_start(update: Update, Context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, Context):
-            return ConversationHandler.END
-        await update.effective_chat.send_message("Wklej treść KONTAKT (zastąpi obecną)")
-        return ASK_SET_KONTAKT
-
-    async def on_set_kontakt_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        text_val = update.message.text or ""
-        async with command_bus.database.get_session() as db:
-            await db.execute(text(
-                """
-                INSERT INTO config (key, value, created_at, updated_at)
-                VALUES ('kontakt_text', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-                """
-            ), {"val": text_val})
-            await db.commit()
-        await update.effective_chat.send_message("Zapisano KONTAKT.")
-        return ConversationHandler.END
-
-    async def on_set_time_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        await update.effective_chat.send_message("Podaj globalny interwał w minutach (liczba > 0)")
-        return ASK_SET_TIME
-
-    async def on_set_time_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        try:
-            minutes = int((update.message.text or "").strip())
-            if minutes <= 0:
-                raise ValueError
-        except Exception:
-            await update.effective_chat.send_message("Nieprawidłowa liczba. Spróbuj ponownie.")
-            return ConversationHandler.END
-        async with command_bus.database.get_session() as db:
-            await db.execute(text(
-                """
-                INSERT INTO config (key, value, created_at, updated_at)
-                VALUES ('global_interval_minutes', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-                """
-            ), {"val": str(minutes)})
-            await db.commit()
-        await update.effective_chat.send_message(f"Zapisano globalny interwał: {minutes} min")
-        return ConversationHandler.END
-
-    async def on_set_ex_time_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        await update.effective_chat.send_message("Podaj interwał Ex-Time (minuty > 0)")
-        return ASK_SET_EX_TIME
-
-    async def on_set_ex_time_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await ensure_admin(update, context):
-            return ConversationHandler.END
-        try:
-            minutes = int((update.message.text or "").strip())
-            if minutes <= 0:
-                raise ValueError
-        except Exception:
-            await update.effective_chat.send_message("Nieprawidłowa liczba. Spróbuj ponownie.")
-            return ConversationHandler.END
-        async with command_bus.database.get_session() as db:
-            await db.execute(text(
-                """
-                INSERT INTO config (key, value, created_at, updated_at)
-                VALUES ('excluded_interval_minutes', :val, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET value=:val, updated_at=CURRENT_TIMESTAMP
-                """
-            ), {"val": str(minutes)})
-            await db.commit()
-        await update.effective_chat.send_message(f"Zapisano Ex-Time: {minutes} min")
-        return ConversationHandler.END
-
     async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await ensure_admin(update, context):
             return
         query = update.callback_query
         data = query.data if query else ""
-        logger.debug(f"Callback received: {data}")
+        logger.debug(f"Admin callback received: {data}")
         await query.answer()
+        
         if data == "groups":
             await on_groups_menu(update, context)
-        elif data == "groups_bulk":
-            await on_groups_bulk_start(update, context)
         elif data == "groups_list":
             await groups_list_action(update, context)
         elif data == "groups_add":
-            await on_groups_add_start(update, context)
+            context.user_data['awaiting'] = 'groups_add'
+            await update.effective_chat.send_message("Podaj identyfikator grupy (chat_id lub @username)")
+        elif data == "groups_bulk":
+            context.user_data['awaiting'] = 'groups_bulk'
+            await update.effective_chat.send_message("Wklej listę grup (każda linia = chat_id lub @username)")
         elif data == "groups_del":
-            await on_groups_del_start(update, context)
+            context.user_data['awaiting'] = 'groups_del'
+            await update.effective_chat.send_message("Podaj ID (z listy) do usunięcia (liczba)")
         elif data == "set_info":
-            await on_set_info_start(update, context)
+            context.user_data['awaiting'] = 'set_info'
+            await update.effective_chat.send_message("Wklej treść INFO (zastąpi obecną)")
         elif data == "set_kontakt":
-            await on_set_kontakt_start(update, context)
+            context.user_data['awaiting'] = 'set_kontakt'
+            await update.effective_chat.send_message("Wklej treść KONTAKT (zastąpi obecną)")
         elif data == "time":
-            await on_set_time_start(update, context)
+            context.user_data['awaiting'] = 'set_time'
+            await update.effective_chat.send_message("Podaj globalny interwał w minutach (liczba > 0)")
         elif data == "ex_time":
-            await on_set_ex_time_start(update, context)
+            context.user_data['awaiting'] = 'set_ex_time'
+            await update.effective_chat.send_message("Podaj interwał Ex-Time (minuty > 0)")
         elif data == "admin_status":
             await status(update, context)
+        elif data == "back_to_main":
+            await admin_panel(update, context)
         else:
-            await update.effective_chat.send_message(f"TODO: implement menu action: {data}")
+            await update.effective_chat.send_message(f"Nieznana akcja: {data}")
 
+    # Register handlers: callback first, then commands
     app.add_handler(CallbackQueryHandler(on_callback))
-
-    conv_bulk = ConversationHandler(
-        entry_points=[CallbackQueryHandler(on_groups_bulk_start, pattern="^groups_bulk$")],
-        states={ASK_BULK_GROUPS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_groups_bulk_receive)]},
-        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
-        per_message=False,
-    )
-    conv_info = ConversationHandler(
-        entry_points=[CallbackQueryHandler(on_set_info_start, pattern="^set_info$")],
-        states={ASK_SET_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_set_info_receive)]},
-        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
-        per_message=False,
-    )
-    conv_kontakt = ConversationHandler(
-        entry_points=[CallbackQueryHandler(on_set_kontakt_start, pattern="^set_kontakt$")],
-        states={ASK_SET_KONTAKT: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_set_kontakt_receive)]},
-        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
-        per_message=False,
-    )
-    conv_time = ConversationHandler(
-        entry_points=[CallbackQueryHandler(on_set_time_start, pattern="^time$")],
-        states={ASK_SET_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_set_time_receive)]},
-        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
-        per_message=False,
-    )
-    conv_ex_time = ConversationHandler(
-        entry_points=[CallbackQueryHandler(on_set_ex_time_start, pattern="^ex_time$")],
-        states={ASK_SET_EX_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_set_ex_time_receive)]},
-        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
-        per_message=False,
-    )
-
-    conv_add = ConversationHandler(
-        entry_points=[CallbackQueryHandler(on_groups_add_start, pattern="^groups_add$")],
-        states={ASK_GROUPS_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_groups_add_receive)]},
-        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
-        per_message=False,
-    )
-
-    conv_del = ConversationHandler(
-        entry_points=[CallbackQueryHandler(on_groups_del_start, pattern="^groups_del$")],
-        states={ASK_GROUPS_DEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_groups_del_receive)]},
-        fallbacks=[CommandHandler(admin_cmd, admin_panel)],
-        per_message=False,
-    )
-
-    app.add_handler(conv_bulk)
-    app.add_handler(conv_info)
-    app.add_handler(conv_kontakt)
-    app.add_handler(conv_time)
-    app.add_handler(conv_ex_time)
-    app.add_handler(conv_add)
-    app.add_handler(conv_del)
-
     app.add_handler(CommandHandler(admin_cmd, admin_panel))
     app.add_handler(CommandHandler("status", status))
 
-    logger.info("Admin handlers registered with Groups List/Add/Delete and admin_status callback")
+    logger.info(f"Admin handlers registered: /{admin_cmd}, /status, callbacks (simplified flow)")

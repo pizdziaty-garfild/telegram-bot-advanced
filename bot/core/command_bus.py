@@ -1,32 +1,31 @@
-"""
-Enhanced Command Bus - Integration Point for All Services
+from typing import TYPE_CHECKING
 
-Coordinates:
-- Database manager
-- Enhanced user manager with session stats
-- RBAC manager with caching
-- Enhanced scheduler with job metrics
-"""
+if TYPE_CHECKING:
+    from bot.infra.database import DatabaseManager
+    from bot.core.enhanced_user_manager import EnhancedUserManager
+    from bot.core.enhanced_rbac_manager import EnhancedRBACManager
+    from bot.core.enhanced_scheduler_service import EnhancedSchedulerService
 
-from dataclasses import dataclass
-from typing import Optional
-
-from bot.infra.database import DatabaseManager
-from bot.core.enhanced_user_manager import EnhancedUserManager
-from bot.core.enhanced_rbac_manager import EnhancedRBACManager
-from bot.core.enhanced_scheduler_service import EnhancedSchedulerService
+from bot.services.groups_service import GroupsService
 
 
-@dataclass
+class CommandBusServices:
+    def __init__(self, database, user_manager, rbac, scheduler):
+        self.groups_service = GroupsService(database)
+
+
 class CommandBus:
-    """Command bus for service coordination"""
+    """Central command bus for handling all bot operations"""
 
-    database: DatabaseManager
-    user_manager: EnhancedUserManager
-    rbac: EnhancedRBACManager
-    scheduler: Optional[EnhancedSchedulerService] = None
-
-    def __post_init__(self):
-        """Post-initialization setup"""
-        # Additional setup if needed
-        pass
+    def __init__(
+        self,
+        database: "DatabaseManager",
+        user_manager: "EnhancedUserManager",
+        rbac: "EnhancedRBACManager",
+        scheduler: "EnhancedSchedulerService",
+    ):
+        self.database = database
+        self.user_manager = user_manager
+        self.rbac = rbac
+        self.scheduler = scheduler
+        self.services = CommandBusServices(database, user_manager, rbac, scheduler)
