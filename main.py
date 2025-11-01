@@ -98,15 +98,8 @@ class EnhancedTelegramBot:
             logger.debug("STEP 10: Telegram polling start")
             await self.application.initialize()
             await self.application.start()
-            await self.application.updater.start_polling(
-                poll_interval=1.0,
-                timeout=10,
-                bootstrap_retries=-1,
-                read_timeout=20,
-                write_timeout=20,
-                connect_timeout=20,
-                pool_timeout=20,
-            )
+            # PTB v20+: Updater.start_polling no longer supports read/write/connect/pool timeout args
+            await self.application.updater.start_polling(poll_interval=1.0)
 
             logger.info("Bot is running in polling mode. Press Ctrl+C to stop.")
             await self._shutdown_event.wait()
