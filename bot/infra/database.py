@@ -56,11 +56,12 @@ class DatabaseManager:
         if db_url.startswith("sqlite:///") and not db_url.startswith("sqlite+aiosqlite:///"):
             db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
 
-        self.engine = create_async_engine(
-            db_url,
-            echo=self.config.echo,
-            pool_size=self.config.pool_size if not db_url.startswith("sqlite+") else None,
-        )
+        # Important: SQLite async driver should not receive pool_size
+        engine_kwargs = {"echo": self.config.echo}
+        if not db_url.startswith("sqlite+"):
+            engine_kwargs["pool_size"] = int(self.config.pool_size or 10)
+
+        self.engine = create_async_engine(db_url, **engine_kwargs)
         self._session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
         logger.info("Database initialized: %s", db_url)
 
